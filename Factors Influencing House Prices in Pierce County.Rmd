@@ -1,0 +1,331 @@
+---
+title: "Factors affect the house price in Pierce County in 2020"
+author: "Xinjing Guo 1005086620"
+output: pdf_document
+---
+
+```{r}
+library(gridExtra)
+library(tidyverse) 
+library(car)
+library(patchwork)
+library(MASS)
+data=read.csv("/Users/xinjingguo/Desktop/pierce_county_house_sales.csv")
+apartment <- na.omit(data)
+```
+
+```{r}
+set.seed(620)
+apartment_new <- apartment %>% mutate( attic_finished_square_feet = ifelse(attic_finished_square_feet == "0", "no","yes"),
+                                       basement_square_feet = ifelse(basement_square_feet=="0", "no", "yes"),
+                                       detached_garage_square_feet = ifelse(detached_garage_square_feet=="0", "no", "yes"))
+
+#calculate the number of rows in my data 
+rows <- nrow(apartment_new)
+#divide it into train and test set 
+train <- sample(1:rows, size=round(0.8*rows))
+#create a new column called "rowid"
+apartment_new <- apartment_new %>% rowid_to_column()
+#select 80% of the rowid from the data as a training
+training <- apartment_new %>% filter(rowid %in% train)
+#select other rowids from the data as a testing
+testing <-  apartment_new %>% filter(!(rowid %in% train))
+
+```
+
+
+```{r}
+box_price <- training %>% ggplot(aes(y=sale_price))+geom_boxplot()+labs(title="Dollar amount recorded for the sale of the house", caption="Figure1.a")
+box_area <- training %>% ggplot(aes(y=house_square_feet))+geom_boxplot()+labs(title="Sum of the square feet for the building", caption="Figure1.b")
+box_bedrooms <- training %>% ggplot(aes(y=bedrooms))+geom_boxplot()+labs(title="Number of bedrooms listed for a residential property.", caption="Figure1.c")
+box_bathrooms <- training %>% ggplot(aes(y=bathrooms))+geom_boxplot()+labs(title="Number of baths listed for a residential property.", caption="Figure1.d")
+(box_price | box_area)/
+  (box_bedrooms | box_bathrooms)
+```
+
+```{r}
+bar_heating <- ggplot(data=training, aes(y=roof_cover)) + geom_bar() + labs(label ="Material used for the roof. ", x="Figure2.a Types of material used for the roof. ")
+bar_cooling <- ggplot(data=training, aes(y=exterior)) + geom_bar() + labs(label ="Predominant type of construction materials used for the exterior siding on Residential Buildings", x="Figure2.b Types of exterior siding ")
+bar_parking <- ggplot(data=training, aes(y=hvac_description)) + geom_bar() + labs(label ="type of heating source of 
+                                                                          house", x="Figure2.c Types of heating source ")
+bar_sewer <- ggplot(data=training, aes(y=utility_sewer)) + geom_bar() + labs(label ="Identifies sewer", x="Figure2.d Identifies of sewer ")
+grid.arrange(bar_heating, bar_cooling,bar_parking, bar_sewer,nrow=2, ncol=2)
+```
+
+```{r}
+summary(training$sale_price)
+summary(training$house_square_feet)
+summary(training$attached_garage_square_feet)
+summary(training$bathrooms)
+summary(training$stories)
+```
+
+
+```{r}
+model_full <- lm(sale_price ~ . -sale_date -waterfront_type -view_quality -interior -house_square_feet -rowid -sale_price -detached_garage_square_feet, data = training)
+```
+
+
+
+```{r}
+#condition 1 
+y_hat<- fitted (model_full)
+yi <- training$sale_price
+plot(yi, y_hat)
+```
+
+
+
+
+```{r}
+#condition 2
+pairs(~attached_garage_square_feet+ fireplaces +stories+year_built+bedrooms +bathrooms, data=training)
+```
+
+
+```{r}
+#residual plot
+residual <- rstandard(model_full)
+y_hat <- fitted(model_full)
+plot <- plot(y_hat,residual)
+```
+
+
+```{r}
+#QQ plot
+qqnorm(residual)
+qqline(residual)
+```
+```{r}
+par(mfrow=c(2,2))
+plot(training$attached_garage_square_feet,residual)
+plot(training$year_built,residual)
+plot(training$bathrooms,residual)
+plot(training$stories,residual)
+```
+
+```{r}
+summary(powerTransform(cbind(training$sale_price)))
+
+```
+
+```{r}
+trans_full_model <- lm( sale_price^(0.17) ~ . -sale_date -waterfront_type -view_quality -interior -house_square_feet -rowid -sale_price -detached_garage_square_feet, data = training)
+```
+
+```{r}
+residual_plot_1 <- rstandard(trans_full_model)
+qqnorm(residual_plot_1)
+qqline(residual_plot_1)
+```
+
+
+
+```{r}
+auto_model <- step(trans_full_model,direction ="both")
+```
+
+```{r}
+vif(auto_model)
+```
+
+
+```{r}
+summary(auto_model)
+```
+
+```{r}
+summary(trans_full_model)
+```
+```{r}
+vif(trans_full_model)
+```
+
+
+```{r}
+reduce_model <- lm(formula = sale_price^(0.17) ~ attic_finished_square_feet + fireplaces + basement_square_feet + attached_garage_square_feet + exterior  + year_built + bathrooms + utility_sewer, data = training)
+summary(reduce_model)
+```
+```{r}
+vif(reduce_model)
+```
+
+
+
+ANOVA
+```{r}
+anova(auto_model,trans_full_model)
+```
+```{r}
+anova(reduce_model,trans_full_model)
+```
+
+
+adj R^2
+```{r}
+summary(trans_full_model)$adj.r.squared
+summary(auto_model)$adj.r.squared
+summary(reduce_model)$adj.r.squared
+```
+
+AIC
+```{r}
+AIC(trans_full_model)
+AIC(auto_model)
+AIC(reduce_model)
+```
+
+BIC
+```{r}
+BIC(trans_full_model)
+BIC(auto_model)
+BIC(reduce_model)
+```
+
+
+Leverage points, outliers, influential points for automated model:
+
+```{r}
+# leverage points for auto_model:
+h_auto <- hatvalues(auto_model)
+threshold <- 2 * (length(auto_model$coefficients)/nrow(training))
+w_auto <- which(h_auto > threshold)
+
+#randomly select 10 rows to check whether they are reasonable 
+sample_auto <- sample(w_auto,10,replace=F)
+sample_auto
+training[c(2213,6015,1273,8721,4095,12505,6561,3398,12088,6988),]
+```
+
+
+```{r}
+# outliers for auto_model:
+r_auto <- rstandard(auto_model)
+outlier_auto <- which(r_auto > 2 | r_auto < -2)
+#randomly select 10 rows to check whether they are reasonable 
+sample_auto <- sample(outlier_auto,10,replace=F)
+sample_auto
+training[c(9194,13412,11427,10816,8125,676,11535,3779,3091,2128 ),]
+```
+
+
+```{r}
+#influencial points for auto_model:
+D_auto <- cooks.distance(auto_model)
+cutoff_auto <- qf(0.5, length(auto_model$coefficients), nrow(training)-length(auto_model$coefficients), lower.tail=T)
+which(D_auto > cutoff_auto)
+training[4301,]
+training <- training[-c(4301)]
+```
+
+
+Plots about automated model:
+```{r}
+#Check condition 1: scatter plot between yi and y_hat
+y_hat <- fitted(auto_model)
+yi <- training$sale_price^(0.17)
+plot(yi,y_hat)
+```
+
+
+```{r}
+par(mfrow=c(1,2))
+#Check condition 1: scatter plot between yi and y_hat
+y_hat <- fitted(auto_model)
+yi <- training$sale_price^(0.17)
+plot(yi,y_hat)
+#Condition 2: scatter plot between numerical predictors
+pairs(~ attached_garage_square_feet + fireplaces  + year_built + bathrooms, data=training)
+```
+
+
+```{r}
+#residual plot for residual vs. fitted:
+res <- rstandard(auto_model)
+y_hat <- fitted(auto_model)
+plot (y_hat,res)
+```
+
+```{r}
+#scatter plot for residuals vs. predictors
+par(mfrow=c(3,2))
+res <- rstandard(auto_model)
+y_hat <- fitted(auto_model)
+plot (y_hat,res)
+res_auto <- rstandard(auto_model)
+
+plot(training$attached_garage_square_feet, res_auto)
+plot(training$fireplaces, res_auto)
+plot(training$year_built, res_auto)
+plot(training$bathrooms, res_auto)
+qqnorm(res_auto)
+qqline(res_auto)
+```
+
+```{r}
+#residual Q-Qplot:
+qqnorm(res_auto)
+qqline(res_auto)
+```
+
+
+
+```{r}
+summary(powerTransform(cbind(testing$sale_price)))
+```
+
+
+```{r}
+#test model in auto
+test_auto_model <- lm((sale_price)^(0.17) ~ attic_finished_square_feet + basement_square_feet + attached_garage_square_feet + fireplaces + hvac_description + exterior + roof_cover + year_built + bathrooms + utility_sewer,data=testing)
+summary(test_auto_model)
+```
+
+
+
+```{r}
+##test in auto model
+#residual plot for residual vs. predictors
+par(mfrow=c(3,2))
+#test in auto model
+#residual plot for residual vs. fitted
+res_test <- rstandard(test_auto_model)
+y_hat_test <- fitted(test_auto_model)
+plot(y_hat_test,res_test)
+plot(testing$attached_garage_square_feet, res_test)
+plot(testing$year_built, res_test)
+plot(testing$bathrooms, res_test)
+plot(testing$fireplaces, res_test)
+qqnorm(res_test)
+qqline(res_test)
+```
+
+
+
+```{r}
+##test in auto model
+#residual Q-Qplot:
+qqnorm(res_test)
+qqline(res_test)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
